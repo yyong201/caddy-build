@@ -1,0 +1,11 @@
+# OCI 归档 / 镜像导出
+*.tar
+*.tar.gz
+*.bin
+
+# 构建与推送日志
+*.log
+
+# 本地临时产物
+Dockerfile.bak
+/tmp/
