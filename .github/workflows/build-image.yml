@@ -1,0 +1,172 @@
+name: build-caddy-image
+
+# 触发方式：
+#   1) 手动：Actions → build-caddy-image → Run workflow（可指定 Caddy 版本/平台）
+#   2) 推标签：git tag -a v2.12.0 -m "..." && git push origin v2.12.0
+#      → 自动构建 2.12.0 并推 v2.12.0 + latest
+on:
+  workflow_dispatch:
+    inputs:
+      caddy_version:
+        description: 'Caddy 版本（如 2.11.9）；留空则取 Dockerfile 里的 ARG CADDY_VERSION'
+        required: false
+        default: ''
+      push_latest:
+        description: '同时更新 latest 标签'
+        type: boolean
+        default: true
+      platforms:
+        description: '目标平台（逗号分隔）'
+        required: false
+        default: 'linux/amd64,linux/arm64,linux/arm/v7'
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 可用仓库 Variables 覆盖：Settings → Secrets and variables → Actions → Variables
+  IMAGE: ${{ vars.DOCKERHUB_REPO || 'yyong201/caddy2-alpine' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 构建并推送多平台镜像
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解析版本与标签
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.caddy_version }}
+          INPUT_LATEST: ${{ inputs.push_latest }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            VER="${REF_NAME#v}"                    # tag v2.12.0 → 2.12.0
+            WANT_LATEST=true
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            VER="$INPUT_VERSION"
+            WANT_LATEST="${INPUT_LATEST:-true}"
+          else
+            VER=$(grep -oE 'ARG CADDY_VERSION=[0-9.]+' Dockerfile | head -1 | cut -d= -f2)
+            WANT_LATEST="${INPUT_LATEST:-true}"
+          fi
+
+          case "$VER" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::版本格式不合法: '$VER'（应形如 2.11.9）"; exit 1 ;;
+          esac
+
+          PLATS="${INPUT_PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
+
+          echo "version=$VER"       >> "$GITHUB_OUTPUT"
+          echo "platforms=$PLATS"   >> "$GITHUB_OUTPUT"
+
+          TAGS="${IMAGE}:v${VER}"
+          if [ "$WANT_LATEST" = "true" ]; then
+            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
+          fi
+          {
+            echo "tags<<__TAGS__"
+            echo "$TAGS"
+            echo "__TAGS__"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### 构建计划"
+            echo ""
+            echo "- Caddy 版本：\`$VER\`"
+            echo "- 平台：\`$PLATS\`"
+            echo "- 标签："
+            while IFS= read -r t; do echo "  - \`$t\`"; done <<< "$TAGS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 设置 buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 构建并推送
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          # Dockerfile 用 BUILDPLATFORM 交叉编译，runner 原生跑 builder，无需 QEMU
+          platforms: ${{ steps.meta.outputs.platforms }}
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            CADDY_VERSION=${{ steps.meta.outputs.version }}
+            GOPROXY=https://proxy.golang.org,direct
+          provenance: false
+          sbom: false
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 冒烟测试（本机架构模块校验）
+        env:
+          VER: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE}:v${VER}"
+          echo "校验 $IMG"
+          docker pull "$IMG"
+          docker run --rm "$IMG" caddy version
+          OUT=$(docker run --rm "$IMG" caddy list-modules --versions)
+
+          fail=0
+          echo "### 插件校验" >> "$GITHUB_STEP_SUMMARY"
+          echo ""            >> "$GITHUB_STEP_SUMMARY"
+          echo "| 模块 | 状态 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|"    >> "$GITHUB_STEP_SUMMARY"
+          for m in dns.providers.cloudflare dns.providers.tencentcloud dns.providers.alidns \
+                   http.handlers.forward_proxy security http.handlers.webdav \
+                   layer4 caddy.listeners.layer4; do
+            if printf '%s\n' "$OUT" | grep -q "^$m "; then
+              printf '  OK  %s\n' "$m"
+              echo "| \`$m\` | pass |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf '  MISSING  %s\n' "$m"
+              echo "| \`$m\` | **MISSING** |" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || { echo "::error::有插件未编入镜像"; exit 1; }
+
+      - name: 汇总
+        if: always()
+        env:
+          VER: ${{ steps.meta.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo ""
+            echo "### 结果"
+            echo ""
+            echo "- 状态：${{ job.status }}"
+            echo "- 镜像：\`${IMAGE}:v${VER}\`"
+            echo "- digest：\`${DIGEST:-n/a}\`"
+            echo ""
+            echo "拉取：\`docker pull ${IMAGE}:v${VER}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
