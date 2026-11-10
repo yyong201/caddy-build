@@ -9,3 +9,7 @@
 # 本地临时产物
 Dockerfile.bak
 /tmp/
+
+# git 传输包
+git bundle 输出
+*.bundle
