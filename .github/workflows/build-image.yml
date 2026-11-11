@@ -95,14 +95,12 @@ jobs:
           echo "security_version=${SEC_PIN}" >> "${GITHUB_OUTPUT}"
           echo "l4_version=${L4_PIN}"        >> "${GITHUB_OUTPUT}"
           
-          TAGS="${IMAGE}:v${VER}"
-          if [ "${WANT_LATEST}" = "true" ]; then
-            TAGS="${TAGS}"'\n'"${IMAGE}:latest"
-          fi
-          
           {
             echo "tags<<__TAGS__"
-            echo "${TAGS}"
+            echo "${IMAGE}:v${VER}"
+            if [ "${WANT_LATEST}" = "true" ]; then
+              echo "${IMAGE}:latest"
+            fi
             echo "__TAGS__"
           } >> "${GITHUB_OUTPUT}"
           
