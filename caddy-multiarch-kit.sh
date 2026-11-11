@@ -97,8 +97,8 @@ echo "    平台能力: $(docker buildx inspect "$BUILDER" | grep -i '^Platforms
 
 # 预拉基础镜像：避免 buildkit 解析远端 manifest 超时，并提前发现缺架构
 log "预拉基础镜像 caddy:${VER} / caddy:${VER}-builder"
-docker pull "caddy:${VER}"         >/dev/null
-docker pull "caddy:${VER}-builder" >/dev/null
+docker pull "caddy:${VER}" >/dev/null 2>&1 || die "官方未发布 caddy:${VER} 基础镜像（该版本无官方 Docker 镜像），按约定不借用其他版本，已退出"
+docker pull "caddy:${VER}-builder" >/dev/null 2>&1 || die "官方未发布 caddy:${VER}-builder 基础镜像，已退出"
 for P in $PLAT_LIST; do
   docker pull --platform "$P" "caddy:${VER}" >/dev/null 2>&1 \
     || die "caddy:${VER} 没有 ${P} 变体，请调整 PLAT_LIST 后重跑"
@@ -173,26 +173,21 @@ OUT="$WORK/caddy-${VER}-multiarch.tar"
 #   2.11.7 ~ 2.11.x   -> v1.6.2（其 go.mod 要求 caddy >= 2.11.7）
 #   >= 2.12.0         -> 最新（不钉）
 # 按 caddy 版本钉 caddy-security / caddy-l4，保证历史版本可构建、可复现
+# caddy-security 按区间钉（2.11.4~6 -> v1.3.0；2.11.7~2.11.x -> v1.6.2；>=2.12 最新）
 ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
 SECURITY_VERSION="${SECURITY_VERSION:-}"
 L4_VERSION="${L4_VERSION:-}"
-if [ -z "${SECURITY_VERSION}" ] && [ -z "${L4_VERSION}" ]; then
-  case "${VER}" in
-    2.11.1) SECURITY_VERSION=v1.1.48; L4_VERSION=v0.1.0 ;;
-    2.11.2) SECURITY_VERSION=v1.1.62; L4_VERSION=v0.1.0 ;;
-    2.11.3) SECURITY_VERSION=v1.1.62; L4_VERSION=v0.1.1 ;;
-    2.11.0) die "caddy 2.11.0 无法构建 7 插件版：caddy-l4 最老版本 v0.1.0 也要求 caddy >= 2.11.1" ;;
-    *)
-      if ! ge_ver "${VER}" 2.11.4; then
-        die "caddy ${VER} 过低：当前插件组合最低支持 2.11.1"
-      elif ! ge_ver "${VER}" 2.11.7; then
-        SECURITY_VERSION=v1.3.0
-      elif ! ge_ver "${VER}" 2.12.0; then
-        SECURITY_VERSION=v1.6.2
-      fi ;;
-  esac
-  [ -n "${SECURITY_VERSION}" ] && log "caddy ${VER} -> security@${SECURITY_VERSION}"
-  [ -n "${L4_VERSION}" ] && log "caddy ${VER} -> caddy-l4@${L4_VERSION}"
+if [ -z "${SECURITY_VERSION}" ]; then
+  if ! ge_ver "${VER}" 2.11.4; then
+    die "caddy ${VER} 不受支持：官方镜像未发布该版本（2.11.0/1/2/3/5 均无）"
+  elif ! ge_ver "${VER}" 2.11.7; then
+    SECURITY_VERSION=v1.3.0
+  elif ! ge_ver "${VER}" 2.12.0; then
+    SECURITY_VERSION=v1.6.2
+  fi
+  if [ -n "${SECURITY_VERSION}" ]; then
+    log "caddy ${VER} -> caddy-security@${SECURITY_VERSION}"
+  fi
 fi
 
 if [ "$DRY_RUN" = "1" ]; then

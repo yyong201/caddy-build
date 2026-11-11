@@ -75,38 +75,20 @@ jobs:
           #   2.11.7 ~ 2.11.x -> v1.6.2（要求 caddy >= 2.11.7）
           #   >= 2.12.0       -> 最新（不钉）
           # 按 caddy 版本钉 caddy-security / caddy-l4（历史版本可构建 + 可复现）
+          # caddy-security 按区间钉（2.11.4~6 -> v1.3.0；2.11.7~2.11.x -> v1.6.2；>=2.12 最新）
           ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
           SEC_PIN=""
           L4_PIN=""
-          case "${VER}" in
-            2.11.1) SEC_PIN=v1.1.48; L4_PIN=v0.1.0 ;;
-            2.11.2) SEC_PIN=v1.1.62; L4_PIN=v0.1.0 ;;
-            2.11.3) SEC_PIN=v1.1.62; L4_PIN=v0.1.1 ;;
-            *)
-              if ! ge_ver "${VER}" 2.11.4; then
-                echo "::error::caddy ${VER} 不可构建：caddy-l4 最老版本 v0.1.0 要求 caddy >= 2.11.1（2.11.0 只能做 6 插件版）"
-                exit 1
-              elif ! ge_ver "${VER}" 2.11.7; then
-                SEC_PIN=v1.3.0
-              elif ! ge_ver "${VER}" 2.12.0; then
-                SEC_PIN=v1.6.2
-              fi ;;
-          esac
-          if [ -n "${SEC_PIN}" ] || [ -n "${L4_PIN}" ]; then
-            echo "::notice::caddy caddy ${VER} -> security@${SEC_PIN:-latest} l4@${L4_PIN:-latest}"
+          if ! ge_ver "${VER}" 2.11.4; then
+            echo "::error::caddy ${VER} 不受支持：官方 caddy 镜像未发布该版本（2.11.0/1/2/3/5 都没有），且 caddy-l4 最老版本要求 >= 2.11.1"
+            exit 1
+          elif ! ge_ver "${VER}" 2.11.7; then
+            SEC_PIN=v1.3.0
+          elif ! ge_ver "${VER}" 2.12.0; then
+            SEC_PIN=v1.6.2
           fi
           if [ -n "${SEC_PIN}" ]; then
-            echo "::notice::caddy caddy ${VER} -> 钉 caddy-security@${SEC_PIN}"
-          fi
-          
-          echo "version=${VER}"              >> "${GITHUB_OUTPUT}"
-          echo "platforms=${PLATS}"          >> "${GITHUB_OUTPUT}"
-          echo "security_version=${SEC_PIN}" >> "${GITHUB_OUTPUT}"
-          echo "l4_version=${L4_PIN}" >> "${GITHUB_OUTPUT}"
-          
-          TAGS="${IMAGE}:v${VER}"
-          if [ "${WANT_LATEST}" = "true" ]; then
-            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
+            echo "::notice::caddy caddy ${VER} -> caddy-security@${SEC_PIN}"
           fi
           {
             echo "tags<<__TAGS__"
@@ -121,6 +103,21 @@ jobs:
             echo "- 平台：${PLATS}"
             echo "- caddy-security：${SEC_PIN:-latest}"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 校验官方基础镜像存在
+        env:
+          VER: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          for img in "caddy:${VER}" "caddy:${VER}-builder"; do
+            if docker manifest inspect "$img" >/dev/null 2>&1; then
+              echo "OK  $img"
+            else
+              echo "::error::caddy 官方未发布 $img —— 该 caddy 版本没有官方 Docker 镜像"
+              echo "   按约定不借用其他版本基础镜像，跳过构建（可构建版本：2.11.4 / 2.11.6 / 2.11.7 / 2.11.8 / 2.11.9）"
+              exit 1
+            fi
+          done
 
       - name: 设置 buildx
         uses: docker/setup-buildx-action@v3
