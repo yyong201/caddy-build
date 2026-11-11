@@ -117,6 +117,8 @@ ARG GOPROXY=https://goproxy.cn,direct
 # 钉插件版本（留空=最新）。caddy-security v1.4.0+ 要求 caddy >= 2.11.7，
 # 因此构建 2.11.4/5/6 时脚本会自动填 v1.3.0。
 ARG SECURITY_VERSION=
+# 可选：钉 caddy-l4 版本（留空 = 最新）
+ARG L4_VERSION=
 
 # 构建阶段：跑在宿主原生架构上，交叉编译到 TARGETARCH
 FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
@@ -124,6 +126,7 @@ FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
 ARG CADDY_VERSION
 ARG GOPROXY
 ARG SECURITY_VERSION
+ARG L4_VERSION
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -144,7 +147,7 @@ RUN GOOS=${TARGETOS} \
       --with github.com/caddyserver/forwardproxy \
       --with github.com/greenpau/caddy-security${SECURITY_VERSION:+@${SECURITY_VERSION}} \
       --with github.com/mholt/caddy-webdav \
-      --with github.com/mholt/caddy-l4
+      --with github.com/mholt/caddy-l4${L4_VERSION:+@${L4_VERSION}}
 
 # 运行阶段：只 COPY，不执行目标架构二进制（无 QEMU 也可构建）
 FROM caddy:${CADDY_VERSION}
@@ -169,17 +172,27 @@ OUT="$WORK/caddy-${VER}-multiarch.tar"
 #   2.11.4 ~ 2.11.6   -> v1.3.0（其 go.mod 要求 caddy >= 2.11.4）
 #   2.11.7 ~ 2.11.x   -> v1.6.2（其 go.mod 要求 caddy >= 2.11.7）
 #   >= 2.12.0         -> 最新（不钉）
+# 按 caddy 版本钉 caddy-security / caddy-l4，保证历史版本可构建、可复现
 ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
 SECURITY_VERSION="${SECURITY_VERSION:-}"
-if [ -z "${SECURITY_VERSION}" ]; then
-  if ! ge_ver "${VER}" 2.11.4; then
-    die "caddy ${VER} 过低：当前插件组合最低支持 2.11.4"
-  elif ! ge_ver "${VER}" 2.11.7; then
-    SECURITY_VERSION=v1.3.0
-  elif ! ge_ver "${VER}" 2.12.0; then
-    SECURITY_VERSION=v1.6.2
-  fi
-  [ -n "${SECURITY_VERSION}" ] && log "caddy ${VER} -> 钉 caddy-security@${SECURITY_VERSION}"
+L4_VERSION="${L4_VERSION:-}"
+if [ -z "${SECURITY_VERSION}" ] && [ -z "${L4_VERSION}" ]; then
+  case "${VER}" in
+    2.11.1) SECURITY_VERSION=v1.1.48; L4_VERSION=v0.1.0 ;;
+    2.11.2) SECURITY_VERSION=v1.1.62; L4_VERSION=v0.1.0 ;;
+    2.11.3) SECURITY_VERSION=v1.1.62; L4_VERSION=v0.1.1 ;;
+    2.11.0) die "caddy 2.11.0 无法构建 7 插件版：caddy-l4 最老版本 v0.1.0 也要求 caddy >= 2.11.1" ;;
+    *)
+      if ! ge_ver "${VER}" 2.11.4; then
+        die "caddy ${VER} 过低：当前插件组合最低支持 2.11.1"
+      elif ! ge_ver "${VER}" 2.11.7; then
+        SECURITY_VERSION=v1.3.0
+      elif ! ge_ver "${VER}" 2.12.0; then
+        SECURITY_VERSION=v1.6.2
+      fi ;;
+  esac
+  [ -n "${SECURITY_VERSION}" ] && log "caddy ${VER} -> security@${SECURITY_VERSION}"
+  [ -n "${L4_VERSION}" ] && log "caddy ${VER} -> caddy-l4@${L4_VERSION}"
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
@@ -200,6 +213,7 @@ docker buildx build --builder "$BUILDER" \
   --build-arg CADDY_VERSION="$VER" \
   --build-arg GOPROXY="$GOPROXY_MIRROR" \
   --build-arg SECURITY_VERSION="${SECURITY_VERSION}" \
+  --build-arg L4_VERSION="${L4_VERSION}" \
   --output "type=oci,dest=$OUT" .
 log "导出完成: $(du -h "$OUT" | cut -f1)  ->  $OUT"
 

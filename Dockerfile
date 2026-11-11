@@ -8,6 +8,9 @@ ARG GOPROXY=https://goproxy.cn,direct
 # 背景：caddy-security v1.4.0+ 把最低要求提到 caddy >= 2.11.7，不钉会在 go get 阶段报
 #   github.com/greenpau/caddy-security@v1.6.2 requires caddy/v2@v2.11.7, but v2.11.6 is requested
 ARG SECURITY_VERSION=
+# 可选：钉 caddy-l4 版本（留空 = 最新）。2.11.1~2.11.3 需要钉旧版：
+#   2.11.3 -> v0.1.1；2.11.2/2.11.1 -> v0.1.0；>=2.11.4 用最新 v0.1.2
+ARG L4_VERSION=
 
 # ---------- 构建阶段：跑在宿主原生架构上，交叉编译到 TARGETARCH ----------
 FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
@@ -15,6 +18,7 @@ FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
 ARG CADDY_VERSION
 ARG GOPROXY
 ARG SECURITY_VERSION
+ARG L4_VERSION
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -35,7 +39,7 @@ RUN GOOS=${TARGETOS} \
       --with github.com/caddyserver/forwardproxy \
       --with github.com/greenpau/caddy-security${SECURITY_VERSION:+@$SECURITY_VERSION} \
       --with github.com/mholt/caddy-webdav \
-      --with github.com/mholt/caddy-l4
+      --with github.com/mholt/caddy-l4${L4_VERSION:+@${L4_VERSION}}
 
 # ---------- 运行阶段：只 COPY，不执行目标架构二进制（无 QEMU 也可构建） ----------
 FROM caddy:${CADDY_VERSION}

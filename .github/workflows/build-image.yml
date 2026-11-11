@@ -74,15 +74,26 @@ jobs:
           #   2.11.4 ~ 2.11.6 -> v1.3.0（要求 caddy >= 2.11.4）
           #   2.11.7 ~ 2.11.x -> v1.6.2（要求 caddy >= 2.11.7）
           #   >= 2.12.0       -> 最新（不钉）
+          # 按 caddy 版本钉 caddy-security / caddy-l4（历史版本可构建 + 可复现）
           ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
           SEC_PIN=""
-          if ! ge_ver "${VER}" 2.11.4; then
-            echo "::error::caddy ${VER} 过低：当前插件组合最低支持 2.11.4（caddy-l4 v0.1.2 / caddy-security v1.3.0 的要求）"
-            exit 1
-          elif ! ge_ver "${VER}" 2.11.7; then
-            SEC_PIN=v1.3.0
-          elif ! ge_ver "${VER}" 2.12.0; then
-            SEC_PIN=v1.6.2
+          L4_PIN=""
+          case "${VER}" in
+            2.11.1) SEC_PIN=v1.1.48; L4_PIN=v0.1.0 ;;
+            2.11.2) SEC_PIN=v1.1.62; L4_PIN=v0.1.0 ;;
+            2.11.3) SEC_PIN=v1.1.62; L4_PIN=v0.1.1 ;;
+            *)
+              if ! ge_ver "${VER}" 2.11.4; then
+                echo "::error::caddy ${VER} 不可构建：caddy-l4 最老版本 v0.1.0 要求 caddy >= 2.11.1（2.11.0 只能做 6 插件版）"
+                exit 1
+              elif ! ge_ver "${VER}" 2.11.7; then
+                SEC_PIN=v1.3.0
+              elif ! ge_ver "${VER}" 2.12.0; then
+                SEC_PIN=v1.6.2
+              fi ;;
+          esac
+          if [ -n "${SEC_PIN}" ] || [ -n "${L4_PIN}" ]; then
+            echo "::notice::caddy caddy ${VER} -> security@${SEC_PIN:-latest} l4@${L4_PIN:-latest}"
           fi
           if [ -n "${SEC_PIN}" ]; then
             echo "::notice::caddy caddy ${VER} -> 钉 caddy-security@${SEC_PIN}"
@@ -91,6 +102,7 @@ jobs:
           echo "version=${VER}"              >> "${GITHUB_OUTPUT}"
           echo "platforms=${PLATS}"          >> "${GITHUB_OUTPUT}"
           echo "security_version=${SEC_PIN}" >> "${GITHUB_OUTPUT}"
+          echo "l4_version=${L4_PIN}" >> "${GITHUB_OUTPUT}"
           
           TAGS="${IMAGE}:v${VER}"
           if [ "${WANT_LATEST}" = "true" ]; then
@@ -132,6 +144,7 @@ jobs:
           build-args: |
             CADDY_VERSION=${{ steps.meta.outputs.version }}
             SECURITY_VERSION=${{ steps.meta.outputs.security_version }}
+            L4_VERSION=${{ steps.meta.outputs.l4_version }}
             GOPROXY=https://proxy.golang.org,direct
           provenance: false
           sbom: false
