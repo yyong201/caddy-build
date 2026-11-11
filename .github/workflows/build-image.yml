@@ -70,18 +70,22 @@ jobs:
           esac
           PLATS="${INPUT_PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
           
-          # caddy-security v1.4.0+ 要求 caddy >= 2.11.7；更低版本必须钉旧版
-          # 已知下限：caddy-security v1.3.0 -> caddy >= 2.11.4
+          # 按区间钉 caddy-security，保证构建可复现：
+          #   2.11.4 ~ 2.11.6 -> v1.3.0（要求 caddy >= 2.11.4）
+          #   2.11.7 ~ 2.11.x -> v1.6.2（要求 caddy >= 2.11.7）
+          #   >= 2.12.0       -> 最新（不钉）
+          ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
           SEC_PIN=""
-          LOWEST=$( { echo 2.11.7; echo "${VER}"; } | sort -V | head -1 )
-          if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.7" ]; then
+          if ! ge_ver "${VER}" 2.11.4; then
+            echo "::error::caddy ${VER} 过低：当前插件组合最低支持 2.11.4（caddy-l4 v0.1.2 / caddy-security v1.3.0 的要求）"
+            exit 1
+          elif ! ge_ver "${VER}" 2.11.7; then
             SEC_PIN=v1.3.0
-            LOWEST=$( { echo 2.11.4; echo "${VER}"; } | sort -V | head -1 )
-            if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.4" ]; then
-              echo "::error::caddy ${VER} 过低：当前插件组合最低支持 2.11.4（caddy-security v1.3.0 要求）"
-              exit 1
-            fi
-            echo "::notice::caddy ${VER} < 2.11.7 -> 自动钉 caddy-security@${SEC_PIN}"
+          elif ! ge_ver "${VER}" 2.12.0; then
+            SEC_PIN=v1.6.2
+          fi
+          if [ -n "${SEC_PIN}" ]; then
+            echo "::notice::caddy caddy ${VER} -> 钉 caddy-security@${SEC_PIN}"
           fi
           
           echo "version=${VER}"              >> "${GITHUB_OUTPUT}"

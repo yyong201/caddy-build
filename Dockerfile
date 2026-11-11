@@ -1,9 +1,11 @@
 ARG CADDY_VERSION=2.11.9
 ARG GOPROXY=https://goproxy.cn,direct
-# 可选：钉住个别插件版本。留空 = 取最新。
-# 为什么需要它：caddy-security v1.4.0+ 把最低要求提到 caddy >= 2.11.7，
-# 所以构建 caddy 2.11.4/5/6 时必须钉 SECURITY_VERSION=v1.3.0（要求 >= 2.11.4），
-# 否则 xcaddy 会在 go get 阶段报：
+# 可选：钉住 caddy-security 版本。留空 = 取最新。
+# CI 与 caddy-multiarch-kit.sh 按基础 caddy 版本自动按区间钉版：
+#   2.11.4 ~ 2.11.6  -> v1.3.0（其 go.mod 要求 caddy >= 2.11.4）
+#   2.11.7 ~ 2.11.x  -> v1.6.2（其 go.mod 要求 caddy >= 2.11.7）
+#   >= 2.12.0        -> 不钉，取最新
+# 背景：caddy-security v1.4.0+ 把最低要求提到 caddy >= 2.11.7，不钉会在 go get 阶段报
 #   github.com/greenpau/caddy-security@v1.6.2 requires caddy/v2@v2.11.7, but v2.11.6 is requested
 ARG SECURITY_VERSION=
 

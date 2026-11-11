@@ -165,11 +165,21 @@ fi
 OUT="$WORK/caddy-${VER}-multiarch.tar"
 
 # caddy-security v1.4.0+ 要求 caddy >= 2.11.7；低于该版本时自动钉 v1.3.0（要求 >= 2.11.4）
+# 按区间钉 caddy-security，保证构建可复现：
+#   2.11.4 ~ 2.11.6   -> v1.3.0（其 go.mod 要求 caddy >= 2.11.4）
+#   2.11.7 ~ 2.11.x   -> v1.6.2（其 go.mod 要求 caddy >= 2.11.7）
+#   >= 2.12.0         -> 最新（不钉）
+ge_ver() { [ "$1" = "$2" ] && return 0; [ "$( { echo "$1"; echo "$2"; } | sort -V | head -1 )" = "$2" ]; }
 SECURITY_VERSION="${SECURITY_VERSION:-}"
-LOWEST=$( { echo 2.11.7; echo "${VER}"; } | sort -V | head -1 )
-if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.7" ]; then
-  SECURITY_VERSION=v1.3.0
-  log "caddy ${VER} < 2.11.7 -> auto pin caddy-security@${SECURITY_VERSION}"
+if [ -z "${SECURITY_VERSION}" ]; then
+  if ! ge_ver "${VER}" 2.11.4; then
+    die "caddy ${VER} 过低：当前插件组合最低支持 2.11.4"
+  elif ! ge_ver "${VER}" 2.11.7; then
+    SECURITY_VERSION=v1.3.0
+  elif ! ge_ver "${VER}" 2.12.0; then
+    SECURITY_VERSION=v1.6.2
+  fi
+  [ -n "${SECURITY_VERSION}" ] && log "caddy ${VER} -> 钉 caddy-security@${SECURITY_VERSION}"
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
