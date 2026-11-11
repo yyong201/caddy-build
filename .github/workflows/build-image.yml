@@ -54,45 +54,57 @@ jobs:
           INPUT_PLATFORMS: ${{ inputs.platforms }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "push" ]; then
-            VER="${REF_NAME#v}"                    # tag v2.12.0 → 2.12.0
+          if [ "${EVENT_NAME}" = "push" ]; then
+            VER="${REF_NAME#v}"
             WANT_LATEST=true
           elif [ -n "${INPUT_VERSION:-}" ]; then
-            VER="$INPUT_VERSION"
+            VER="${INPUT_VERSION}"
             WANT_LATEST="${INPUT_LATEST:-true}"
           else
             VER=$(grep -oE 'ARG CADDY_VERSION=[0-9.]+' Dockerfile | head -1 | cut -d= -f2)
             WANT_LATEST="${INPUT_LATEST:-true}"
           fi
-
-          case "$VER" in
+          case "${VER}" in
             [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::版本格式不合法: '$VER'（应形如 2.11.9）"; exit 1 ;;
+            *) echo "::error::版本格式不合法: '${VER}'（应形如 2.11.9）"; exit 1 ;;
           esac
-
           PLATS="${INPUT_PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
-
-          echo "version=$VER"       >> "$GITHUB_OUTPUT"
-          echo "platforms=$PLATS"   >> "$GITHUB_OUTPUT"
-
+          
+          # caddy-security v1.4.0+ 要求 caddy >= 2.11.7；更低版本必须钉旧版
+          # 已知下限：caddy-security v1.3.0 -> caddy >= 2.11.4
+          SEC_PIN=""
+          LOWEST=$( { echo 2.11.7; echo "${VER}"; } | sort -V | head -1 )
+          if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.7" ]; then
+            SEC_PIN=v1.3.0
+            LOWEST=$( { echo 2.11.4; echo "${VER}"; } | sort -V | head -1 )
+            if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.4" ]; then
+              echo "::error::caddy ${VER} 过低：当前插件组合最低支持 2.11.4（caddy-security v1.3.0 要求）"
+              exit 1
+            fi
+            echo "::notice::caddy ${VER} < 2.11.7 -> 自动钉 caddy-security@${SEC_PIN}"
+          fi
+          
+          echo "version=${VER}"              >> "${GITHUB_OUTPUT}"
+          echo "platforms=${PLATS}"          >> "${GITHUB_OUTPUT}"
+          echo "security_version=${SEC_PIN}" >> "${GITHUB_OUTPUT}"
+          
           TAGS="${IMAGE}:v${VER}"
-          if [ "$WANT_LATEST" = "true" ]; then
+          if [ "${WANT_LATEST}" = "true" ]; then
             TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
           fi
           {
             echo "tags<<__TAGS__"
-            echo "$TAGS"
+            echo "${TAGS}"
             echo "__TAGS__"
-          } >> "$GITHUB_OUTPUT"
-
+          } >> "${GITHUB_OUTPUT}"
+          
           {
             echo "### 构建计划"
             echo ""
-            echo "- Caddy 版本：\`$VER\`"
-            echo "- 平台：\`$PLATS\`"
-            echo "- 标签："
-            while IFS= read -r t; do echo "  - \`$t\`"; done <<< "$TAGS"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "- Caddy 版本：${VER}"
+            echo "- 平台：${PLATS}"
+            echo "- caddy-security：${SEC_PIN:-latest}"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: 设置 buildx
         uses: docker/setup-buildx-action@v3
@@ -115,6 +127,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             CADDY_VERSION=${{ steps.meta.outputs.version }}
+            SECURITY_VERSION=${{ steps.meta.outputs.security_version }}
             GOPROXY=https://proxy.golang.org,direct
           provenance: false
           sbom: false

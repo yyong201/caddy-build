@@ -114,12 +114,16 @@ if [ ! -f Dockerfile ]; then
   cat > Dockerfile <<'DOCKERFILE'
 ARG CADDY_VERSION=2.11.9
 ARG GOPROXY=https://goproxy.cn,direct
+# 钉插件版本（留空=最新）。caddy-security v1.4.0+ 要求 caddy >= 2.11.7，
+# 因此构建 2.11.4/5/6 时脚本会自动填 v1.3.0。
+ARG SECURITY_VERSION=
 
 # 构建阶段：跑在宿主原生架构上，交叉编译到 TARGETARCH
 FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
 
 ARG CADDY_VERSION
 ARG GOPROXY
+ARG SECURITY_VERSION
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -138,7 +142,7 @@ RUN GOOS=${TARGETOS} \
       --with github.com/caddy-dns/tencentcloud \
       --with github.com/caddy-dns/alidns \
       --with github.com/caddyserver/forwardproxy \
-      --with github.com/greenpau/caddy-security \
+      --with github.com/greenpau/caddy-security${SECURITY_VERSION:+@${SECURITY_VERSION}} \
       --with github.com/mholt/caddy-webdav \
       --with github.com/mholt/caddy-l4
 
@@ -160,6 +164,14 @@ fi
 
 OUT="$WORK/caddy-${VER}-multiarch.tar"
 
+# caddy-security v1.4.0+ 要求 caddy >= 2.11.7；低于该版本时自动钉 v1.3.0（要求 >= 2.11.4）
+SECURITY_VERSION="${SECURITY_VERSION:-}"
+LOWEST=$( { echo 2.11.7; echo "${VER}"; } | sort -V | head -1 )
+if [ "${LOWEST}" = "${VER}" ] && [ "${VER}" != "2.11.7" ]; then
+  SECURITY_VERSION=v1.3.0
+  log "caddy ${VER} < 2.11.7 -> auto pin caddy-security@${SECURITY_VERSION}"
+fi
+
 if [ "$DRY_RUN" = "1" ]; then
   log "DRY_RUN：以下命令将执行（未真正运行）"
   echo "docker buildx build --builder $BUILDER \\"
@@ -177,6 +189,7 @@ docker buildx build --builder "$BUILDER" \
   --provenance=false \
   --build-arg CADDY_VERSION="$VER" \
   --build-arg GOPROXY="$GOPROXY_MIRROR" \
+  --build-arg SECURITY_VERSION="${SECURITY_VERSION}" \
   --output "type=oci,dest=$OUT" .
 log "导出完成: $(du -h "$OUT" | cut -f1)  ->  $OUT"
 
