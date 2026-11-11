@@ -13,7 +13,7 @@ PROXY=http://127.0.0.1:18080 bash caddy-multiarch-kit.sh 2.11.9
 
 # 其他 amd64 机器：拷过去 → 登录 → 直接跑
 scp caddy-multiarch-kit.sh user@host:~/
-docker login -u yyong201
+docker login -u 用户名
 bash caddy-multiarch-kit.sh 2.12.0
 ```
 
